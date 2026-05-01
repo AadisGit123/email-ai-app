@@ -17,11 +17,18 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
 def get_gmail_service():
     try:
+        # Create token.json from ENV (Render-safe)
+        if os.environ.get("GOOGLE_TOKEN"):
+            with open("token.json", "w") as f:
+                f.write(os.environ["GOOGLE_TOKEN"])
+
         if not os.path.exists("token.json"):
             print("token.json not found")
             return None
+
         creds = Credentials.from_authorized_user_file("token.json", SCOPES)
         return build('gmail', 'v1', credentials=creds)
+
     except Exception as e:
         print("Gmail service error:", e)
         return None
