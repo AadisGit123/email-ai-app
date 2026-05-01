@@ -4,6 +4,7 @@ import base64
 from bs4 import BeautifulSoup
 import html
 import time
+import os
 
 CACHE = {
     "data": None,
@@ -15,8 +16,15 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
 
 def get_gmail_service():
-    creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-    return build('gmail', 'v1', credentials=creds)
+    try:
+        if not os.path.exists("token.json"):
+            print("token.json not found")
+            return None
+        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+        return build('gmail', 'v1', credentials=creds)
+    except Exception as e:
+        print("Gmail service error:", e)
+        return None
 
 
 def extract_headers(msg_data):
@@ -108,96 +116,100 @@ def clean_email_text(raw_data):
 
 
 def fetch_emails(page_token=None, max_results=30):
-    # Return cached data if recent
-    if CACHE["data"] and time.time() - CACHE["timestamp"] < CACHE_TTL:
-        print("Returning cached emails...")
-        return CACHE["data"]
+    try:
+        # Return cached data if recent
+        if CACHE["data"] and time.time() - CACHE["timestamp"] < CACHE_TTL:
+            print("Returning cached emails...")
+            return CACHE["data"]
 
-    service = get_gmail_service()
-    results = service.users().messages().list(
-        userId='me',
-        maxResults=max_results,
-        pageToken=page_token
-    ).execute()
+        service = get_gmail_service()
+        if not service:
+            return {"emails": [], "nextPageToken": None}
 
-    messages = results.get('messages', [])
-    next_page_token = results.get('nextPageToken')
+        results = service.users().messages().list(
+            userId='me',
+            maxResults=max_results,
+            pageToken=page_token
+        ).execute()
 
-    emails = []
-    print("Fetching emails from Gmail API...")
+        messages = results.get('messages', [])
+        next_page_token = results.get('nextPageToken')
 
-    for msg in messages:
-        msg_data = service.users().messages().get(userId='me', id=msg['id']).execute()
+        emails = []
+        print("Fetching emails from Gmail API...")
 
-        subject, sender = extract_headers(msg_data)
-        payload = msg_data.get('payload', {})
+        for msg in messages:
+            msg_data = service.users().messages().get(userId='me', id=msg['id']).execute()
 
-        body_data = extract_body(payload)
-        if not body_data:
-            continue
+            subject, sender = extract_headers(msg_data)
+            payload = msg_data.get('payload', {})
 
-        cleaned = clean_email_text(body_data)
+            body_data = extract_body(payload)
+            if not body_data:
+                continue
 
-        if len(cleaned) < 20 or "unsubscribe" in cleaned.lower():
-            continue
+            cleaned = clean_email_text(body_data)
 
-        # Basic classification rules
-        priority = "Normal"
-        category = "General"
-        is_spam = False
+            if len(cleaned) < 20 or "unsubscribe" in cleaned.lower():
+                continue
 
-        text_lower = (subject + " " + cleaned).lower()
+            priority = "Normal"
+            category = "General"
+            is_spam = False
 
-        # Detect important
-        if any(word in text_lower for word in ["urgent", "asap", "important", "deadline", "exam"]):
-            priority = "Important"
+            text_lower = (subject + " " + cleaned).lower()
 
-        # Detect spam/promotions
-        if any(word in text_lower for word in ["sale", "offer", "discount", "unsubscribe", "win", "free"]):
-            category = "Promotions"
-            is_spam = True
+            if any(word in text_lower for word in ["urgent", "asap", "important", "deadline", "exam"]):
+                priority = "Important"
 
-        # Detect updates (orders, accounts, alerts)
-        elif any(word in text_lower for word in ["order", "account", "login", "security", "alert"]):
-            category = "Updates"
+            if any(word in text_lower for word in ["sale", "offer", "discount", "unsubscribe", "win", "free"]):
+                category = "Promotions"
+                is_spam = True
+            elif any(word in text_lower for word in ["order", "account", "login", "security", "alert"]):
+                category = "Updates"
+            elif any(word in text_lower for word in ["friend", "follow", "like", "comment"]):
+                category = "Social"
 
-        # Detect social
-        elif any(word in text_lower for word in ["friend", "follow", "like", "comment"]):
-            category = "Social"
+            emails.append({
+                "subject": subject,
+                "sender": sender,
+                "body": cleaned,
+                "priority": priority,
+                "category": category,
+                "spam": is_spam
+            })
 
-        emails.append({
-            "subject": subject,
-            "sender": sender,
-            "body": cleaned,
-            "priority": priority,
-            "category": category,
-            "spam": is_spam
-        })
+        result = {
+            "emails": emails,
+            "nextPageToken": next_page_token
+        }
 
-    result = {
-        "emails": emails,
-        "nextPageToken": next_page_token
-    }
+        CACHE["data"] = result
+        CACHE["timestamp"] = time.time()
 
-    # Save to cache
-    CACHE["data"] = result
-    CACHE["timestamp"] = time.time()
+        return result
 
-    return result
+    except Exception as e:
+        print("Fetch emails error:", e)
+        return {"emails": [], "nextPageToken": None}
 
 # ---------- GEMINI AI FEATURES ----------
 
-import google.generativeai as genai
-import os
+from google import genai
 
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel("gemini-1.5-flash")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 
 def generate_ai_reply(email_text):
     try:
+        if not client:
+            return "AI not configured"
         prompt = f"Write a short polite reply to this email:\n{email_text[:500]}"
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=prompt
+        )
         return response.text.strip()
     except Exception as e:
         print("Gemini Reply Error:", e)
@@ -206,6 +218,8 @@ def generate_ai_reply(email_text):
 
 def summarize_inbox(emails):
     try:
+        if not client:
+            return "AI not configured"
         combined = " ".join([e.get("body", "") for e in emails[:20]])
 
         prompt = f"""
@@ -217,9 +231,11 @@ def summarize_inbox(emails):
         {combined[:2000]}
         """
 
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=prompt
+        )
         return response.text.strip()
     except Exception as e:
         print("Gemini Summary Error:", e)
         return "Could not generate summary."
-     
