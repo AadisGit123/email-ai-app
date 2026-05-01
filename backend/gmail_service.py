@@ -16,7 +16,9 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
 
 def get_gmail_service():
+    
     try:
+        print("GOOGLE_TOKEN exists:", bool(os.environ.get("GOOGLE_TOKEN")))
         # Create token.json from ENV (Render-safe)
         if os.environ.get("GOOGLE_TOKEN"):
             with open("token.json", "w") as f:
