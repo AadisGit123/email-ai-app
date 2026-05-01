@@ -6,6 +6,10 @@ from gmail_service import generate_ai_reply, summarize_inbox
 from fastapi import Request
 
 app = FastAPI()
+
+@app.get("/")
+def root():
+    return {"message": "Email AI Backend is running 🚀"}
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
