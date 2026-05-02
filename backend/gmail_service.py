@@ -145,7 +145,8 @@ def fetch_emails(page_token=None, max_results=30):
         results = service.users().messages().list(
             userId='me',
             maxResults=max_results,
-            pageToken=page_token
+            pageToken=page_token,
+            q="in:anywhere"
         ).execute()
 
         print("RAW Gmail API response:", results)
@@ -169,7 +170,7 @@ def fetch_emails(page_token=None, max_results=30):
 
             cleaned = clean_email_text(body_data)
 
-            if len(cleaned) < 20 or "unsubscribe" in cleaned.lower():
+            if len(cleaned) < 5:
                 continue
 
             priority = "Normal"
