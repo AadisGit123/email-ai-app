@@ -5,6 +5,7 @@ from bs4 import BeautifulSoup
 import html
 import time
 import os
+import json
 
 CACHE = {
     "data": None,
@@ -19,16 +20,19 @@ def get_gmail_service():
     
     try:
         print("GOOGLE_TOKEN exists:", bool(os.environ.get("GOOGLE_TOKEN")))
-        # Create token.json from ENV (Render-safe)
-        if os.environ.get("GOOGLE_TOKEN"):
-            with open("token.json", "w") as f:
-                f.write(os.environ["GOOGLE_TOKEN"])
 
-        if not os.path.exists("token.json"):
-            print("token.json not found")
+        token_json = os.environ.get("GOOGLE_TOKEN")
+
+        if token_json:
+            creds = Credentials.from_authorized_user_info(
+                json.loads(token_json), SCOPES
+            )
+        elif os.path.exists("token.json"):
+            creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+        else:
+            print("No credentials found")
             return None
 
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
         return build('gmail', 'v1', credentials=creds)
 
     except Exception as e:
@@ -135,13 +139,19 @@ def fetch_emails(page_token=None, max_results=30):
         if not service:
             return {"emails": [], "nextPageToken": None}
 
+        profile = service.users().getProfile(userId='me').execute()
+        print("Connected Gmail account:", profile)
+
         results = service.users().messages().list(
             userId='me',
             maxResults=max_results,
             pageToken=page_token
         ).execute()
 
+        print("RAW Gmail API response:", results)
+
         messages = results.get('messages', [])
+        print("Messages fetched:", messages)
         next_page_token = results.get('nextPageToken')
 
         emails = []
